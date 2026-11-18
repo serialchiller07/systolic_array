@@ -1,73 +1,194 @@
-Reconfigurable INT4/INT8 2×2 Systolic Array Accelerator
-A SystemVerilog RTL implementation of a 2×2 output-stationary systolic array for signed integer matrix multiplication. The design has four processing elements (PEs), each containing a multiply-accumulate (MAC) unit. Operands and validity signals propagate across the array, while each PE accumulates one output matrix element.
 
-The design supports two selectable input interpretation modes:
-- INT8 (precision_mode = 0) — each input is treated as a signed 8-bit integer (−128 to 127).
-- INT4 (precision_mode = 1) — the low four bits of each input are interpreted as a signed 4-bit two's-complement integer (−8 to 7) and sign-extended to 8 bits.
-Implementation note: INT4 and INT8 currently share the same signed 8×8 multiplier and 32-bit accumulator. INT4 mode changes operand interpretation; it does not implement packed INT4 arithmetic or demonstrate reduced multiplier/DSP resource usage.
+# Reconfigurable INT4/INT8 Systolic Array Accelerator
 
-Architecture
-                 B column 0           B column 1
-                      |                    |
-                      v                    v
-A row 0  ------>   [ PE00 ]  ------>    [ PE01 ]
-                      |                    |
-                      v                    v
-A row 1  ------>   [ PE10 ]  ------>    [ PE11 ]
+A SystemVerilog-based implementation of a **2×2 reconfigurable systolic array accelerator** designed for signed integer matrix multiplication.
 
-               C00, C01, C10, C11
-- Four PEs: One 8×8 signed multiplication and 32-bit accumulation per PE.
-- Data movement: A values move right; B values move down through registered inter-PE links.
-- Valid gating: Multiplication results accumulate only when both operand-valid inputs are asserted.
-- Precision selection: Sign extension of the low nibble in INT4 mode, or direct signed 8-bit pass-through in INT8 mode.
-- Controller: A separate top-level controller captures two 2×2 matrices, clears the array, schedules staggered operands, and exposes busy/`done` signals.
-For two input matrices
-A = [a00 a01]     B = [b00 b01]
-    [a10 a11]         [b10 b11]
-the intended output is C = A × B, with:
+The architecture consists of four Processing Elements (PEs), each performing Multiply-Accumulate (MAC) operations. The design supports selectable **INT4 and INT8 precision modes**, enabling matrix multiplication with different operand bit widths.
+
+The project targets the **Xilinx Artix-7 FPGA (Digilent Basys 3)** and uses AMD Vivado for RTL development and simulation.
+
+## Key Features
+
+- 2×2 systolic array architecture with four processing elements.
+- Configurable signed INT4 and INT8 operand modes.
+- 32-bit accumulators for matrix multiplication.
+- Registered operand propagation between processing elements.
+- Valid-signal-controlled MAC operations.
+- Dedicated precision selection module.
+- Accelerator controller for matrix loading and computation scheduling.
+- Self-checking SystemVerilog testbench.
+- Directed verification of INT4 and INT8 matrix multiplication.
+
+## Architecture
+
+The systolic array follows an output-stationary dataflow, where each PE accumulates one element of the output matrix.
+
+```text
+                  B Column 0        B Column 1
+                      |                 |
+                      v                 v
+ A Row 0 ------->   [PE00] --------> [PE01]
+                      |                 |
+                      v                 v
+ A Row 1 ------->   [PE10] --------> [PE11]
+
+             Output Matrix: C = A × B
+```
+
+Each Processing Element performs:
+
+```text
+ACC = ACC + (A × B)
+```
+
+The operands propagate through the array while the partial sums remain in their respective processing elements.
+
+## Precision Modes
+
+| Mode | Selection | Input Range |
+|------|-----------|-------------|
+| INT8 | precision_mode = 0 | -128 to +127 |
+| INT4 | precision_mode = 1 | -8 to +7 |
+
+In INT4 mode, the lower four bits of each operand are interpreted as a signed 4-bit integer and sign-extended to eight bits.
+
+Both modes currently share the same signed 8-bit multiplier hardware. The implementation provides selectable operand precision but does not yet implement dedicated packed INT4 multiplication.
+
+## Matrix Multiplication
+
+For two 2×2 matrices:
+
+```text
+A = [a00  a01]       B = [b00  b01]
+    [a10  a11]           [b10  b11]
+```
+
+The output matrix is:
+
+```text
+C = [c00  c01]
+    [c10  c11]
+```
+
+Where:
+
+```text
 c00 = a00*b00 + a01*b10
 c01 = a00*b01 + a01*b11
 c10 = a10*b00 + a11*b10
 c11 = a10*b01 + a11*b11
-RTL files
-File	Module	Purpose
-multiplier(1).sv	multiplier	Combinational signed 8×8 multiplication with 16-bit product
-mac(1).sv	mac	Clocked, enable-controlled 32-bit accumulator
-precision_selector(1).sv	precision_selector	Selects signed INT8 or sign-extended low-nibble INT4 operands
-systolic_pe(1).sv	systolic_pe	MAC plus registered forwarding of operands and valid bits
-systolic_array_2x2(1).sv	systolic_array_2x2	Connects the four PEs into a 2×2 array
-systolic_array_config(1).sv	systolic_array_config	Adds precision selection at the array inputs
-accelerator_controller(1).sv	accelerator_controller	Matrix input capture, operand scheduling, and busy/`done` state machine
-tb_systolic_array_config.sv	tb_systolic_array_config	Directed self-checking tests for the configurable array
+```
 
+## RTL Modules
 
-The filenames are kept as supplied. They can be renamed to remove (1) without changing their module names.
-Verification
-tb_systolic_array_config.sv generates a 100 MHz clock (#5 half-period with a 1 ns timescale), drives the configurable array directly, and compares all four output accumulators against expected values after each clock edge. A mismatch triggers $fatal.
-Directed INT4 test
-A = [ 2 -1 ]    B = [ 1  2 ]    Expected C = [ 4  1 ]
-    [ 3  2 ]        [-2  3 ]                 [-1 12 ]
-Directed INT8 test
-A = [10 -20]    B = [ 2  3]     Expected C = [ 100 -70]
-    [30  40]        [-4  5]                  [-100 290]
-The testbench also checks reset behavior, intermediate accumulation values, and stability of the final results when all valid inputs are deasserted. It uses directed test cases rather than constrained-random or coverage-driven verification.
+| Module | Description |
+|--------|-------------|
+| multiplier | Signed 8×8 multiplication |
+| mac | Multiply-accumulate operation with 32-bit accumulator |
+| precision_selector | INT4/INT8 operand selection and sign extension |
+| systolic_pe | Processing element with MAC and operand forwarding |
+| systolic_array_2x2 | Four-PE systolic array architecture |
+| systolic_array_config | Configurable precision interface |
+| accelerator_controller | Matrix loading, control FSM, and scheduling |
 
-Verification scope: The supplied testbench instantiates systolic_array_config, not accelerator_controller. Controller handshaking, busy/`done` sequencing, and back-to-back matrix transactions are not covered by this testbench. Hardware implementation and board deployment are not established by the supplied files.
-Simulating in Vivado
-1. Create a new RTL Project in Vivado and select your target FPGA part or board.
-2. Under Design Sources, add all seven RTL .sv files listed above (all except the testbench).
-3. Under Simulation Sources, add tb_systolic_array_config.sv.
-4. Set Simulation Top to tb_systolic_array_config (and, if needed, Design Top to accelerator_controller).
-5. Choose Run Simulation → Run Behavioral Simulation.
-6. Inspect the simulator transcript for PASS TEST lines and the final ALL ... TESTS PASSED message. Any $fatal indicates a mismatch.
-The README describes the testbench's intended behavior. Simulation has not been independently executed as part of preparing this repository documentation, so no passing test result is asserted here.
-Tooling and implementation scope
-- Language: SystemVerilog
-- Development/simulation target: AMD/Xilinx Vivado and XSim
-- FPGA target: Digilent Basys 3 (Xilinx Artix-7 XC7A35T) as a project target; no board bitstream or physical deployment evidence is included
-- Design style: Synchronous RTL, signed arithmetic, valid-controlled streaming, output-stationary accumulation
-Future improvements
-- Add an automated testbench for accelerator_controller, including start, busy, done, reset, and consecutive operations.
-- Test signed INT4/INT8 boundary values and randomized matrices against an independent software reference model.
-- Compare synthesis utilization and timing for the two arithmetic modes; explore genuine packed INT4 or narrower-multiplier implementations.
-- Add synthesis constraints, implementation reports, and board-level validation when hardware is available.
+## Project Structure
+
+```text
+Systolic-Array-Accelerator/
+│
+├── accelerator_controller.sv
+├── mac.sv
+├── multiplier.sv
+├── precision_selector.sv
+├── systolic_array_2x2.sv
+├── systolic_array_config.sv
+├── systolic_pe.sv
+├── tb_systolic_array_config.sv
+└── README.md
+```
+
+## Verification
+
+The project includes a self-checking SystemVerilog testbench for validating the configurable systolic array.
+
+The testbench covers:
+
+- INT4 matrix multiplication.
+- INT8 matrix multiplication.
+- Reset functionality.
+- Intermediate MAC accumulation.
+- Output comparison against expected results.
+- Output stability after valid inputs are deasserted.
+
+### Test Case 1: INT4 Matrix Multiplication
+
+Input matrices:
+
+```text
+A = [2  -1]       B = [ 1  2]
+    [3   2]           [-2  3]
+```
+
+Expected output:
+
+```text
+C = [ 4   1]
+    [-1  12]
+```
+
+### Test Case 2: INT8 Matrix Multiplication
+
+Input matrices:
+
+```text
+A = [10  -20]       B = [ 2  3]
+    [30   40]           [-4  5]
+```
+
+Expected output:
+
+```text
+C = [ 100  -70]
+    [-100  290]
+```
+
+The testbench compares computed outputs against expected results and reports errors when mismatches are detected.
+
+**Verification scope:** The included testbench verifies `systolic_array_config`. The accelerator controller requires separate verification.
+
+## Tools and Technologies
+
+- **HDL:** Verilog / SystemVerilog
+- **Development Environment:** AMD Vivado
+- **Simulation:** Vivado XSim
+- **FPGA Target:** Xilinx Artix-7 XC7A35T
+- **Development Board:** Digilent Basys 3
+- **Clock Target:** 100 MHz
+
+## How to Simulate
+
+1. Open AMD Vivado.
+2. Create a new RTL project.
+3. Add all seven RTL modules under Design Sources.
+4. Add `tb_systolic_array_config.sv` under Simulation Sources.
+5. Set `tb_systolic_array_config` as the simulation top.
+6. Select **Run Simulation → Run Behavioral Simulation**.
+7. Observe the waveforms and check the simulation transcript for test results.
+
+The testbench uses automated comparisons and `$fatal` to detect incorrect outputs.
+
+## Future Improvements
+
+- Dedicated INT4 arithmetic datapath optimization.
+- Randomized verification with signed boundary cases.
+- Accelerator controller verification.
+- FPGA resource utilization analysis.
+- Timing and power optimization.
+- Hardware implementation on Basys 3.
+- Extension to larger systolic arrays and CNN acceleration.
+
+## Author
+
+**Rutva Gandhi**  
+B.Tech, Electronics and Communication Engineering  
+Indian Institute of Information Technology, Nagpur
